@@ -20,6 +20,7 @@ class Item(Base):
     color = Column(String)                       # Колір
     season = Column(String)                      # "Літо", "Зима", "Всесезон"
     image_path = Column(String, nullable=False)  # Шлях до збереженого фото
+    ai_description = Column(String, nullable=True) # AI згенерований набір ключових фраз
 
 # Створюємо таблицю в базі даних (якщо вона ще не створена)
 Base.metadata.create_all(bind=engine)
