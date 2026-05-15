@@ -4,7 +4,7 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-from ai_agent import generate_stylist_reply
+from ai_agent import generate_stylist_reply, analyze_clothing_image_auto
 
 from db import (
     add_clothing_item,
@@ -68,36 +68,79 @@ def render_auth_page() -> None:
                     st.error(message)
 
 
+def render_add_item_page() -> None:
+    user = st.session_state.user
+    st.subheader("Add New Clothing Item")
+
+    if "draft_item" not in st.session_state:
+        st.session_state.draft_item = None
+
+    if st.session_state.draft_item is None:
+        item_image = st.file_uploader(
+            "Upload image to auto-fill details via AI", type=["jpg", "jpeg", "png", "webp"], key="auto_new_item_image"
+        )
+        if item_image is not None:
+            with st.spinner("AI is analyzing the photo..."):
+                image_path = process_and_save_uploaded_image(item_image, UPLOADS_DIR)
+                metadata = analyze_clothing_image_auto(image_path)
+                
+                st.session_state.draft_item = {
+                    "image_path": image_path,
+                    "name": metadata.get("name", ""),
+                    "category": metadata.get("category", "Other"),
+                    "season": metadata.get("season", "All Seasons"),
+                    "ai_description": metadata.get("description", "")
+                }
+            st.rerun()
+    else:
+        draft = st.session_state.draft_item
+        
+        col_img, col_form = st.columns([0.4, 0.6])
+        with col_img:
+            st.image(draft["image_path"], width='stretch')
+            if st.button("Cancel / Upload Another", width='stretch'):
+                st.session_state.draft_item = None
+                st.rerun()
+                
+        with col_form:
+            with st.form("save_clothing_form"):
+                item_name = st.text_input("Name", value=draft["name"])
+                
+                categories = ["Top", "Bottom", "Shoes", "Outerwear", "Dress", "Accessory", "Other"]
+                cat_idx = categories.index(draft["category"]) if draft["category"] in categories else 6
+                item_category = st.selectbox("Category", categories, index=cat_idx)
+                
+                seasons = ["All Seasons", "Spring", "Summer", "Autumn", "Winter"]
+                sea_idx = seasons.index(draft["season"]) if draft["season"] in seasons else 0
+                item_season = st.selectbox("Season", seasons, index=sea_idx)
+                
+                item_desc = st.text_area("AI Details (Properties)", value=draft["ai_description"], height=150)
+                
+                submitted = st.form_submit_button("Save Item", type="primary", width='stretch')
+                    
+            if submitted:
+                if not item_name.strip():
+                    st.error("Name is required.")
+                else:
+                    add_clothing_item(
+                        user_id=user["id"], 
+                        name=item_name, 
+                        image_path=draft["image_path"], 
+                        category=item_category,
+                        season=item_season,
+                        ai_description=item_desc
+                    )
+                    st.session_state.draft_item = None
+                    st.success("Item added successfully!")
+                    st.rerun()
+
 def render_wardrobe_page() -> None:
     user = st.session_state.user
     st.subheader("My Wardrobe")
 
-    with st.expander("Add new clothing item", expanded=True):
-        with st.form("add_clothing_form", clear_on_submit=True):
-            item_name = st.text_input("Name")
-            item_category = st.selectbox(
-                "Category",
-                ["Top", "Bottom", "Shoes", "Outerwear", "Dress", "Accessory", "Other"],
-            )
-            item_image = st.file_uploader(
-                "Upload image", type=["jpg", "jpeg", "png", "webp"], key="new_item_image"
-            )
-            submitted = st.form_submit_button("Save item")
-
-        if submitted:
-            if not item_name.strip():
-                st.error("Name is required.")
-            elif item_image is None:
-                st.error("Image is required.")
-            else:
-                image_path = process_and_save_uploaded_image(item_image, UPLOADS_DIR)
-                add_clothing_item(user_id=user["id"], name=item_name, image_path=image_path, category=item_category)
-                st.success("Item added successfully.")
-                st.rerun()
-
     clothes = get_user_clothes(user["id"])
     if not clothes:
-        st.info("No items yet. Add your first item above.")
+        st.info("No items yet. Add your first item in the 'Add Item' tab.")
         return
 
     columns_per_row = 3
@@ -108,10 +151,13 @@ def render_wardrobe_page() -> None:
             with cols[idx]:
                 image_path = Path(item["image_path"])
                 if image_path.exists():
-                    st.image(str(image_path), use_container_width=True)
+                    st.image(str(image_path), width='stretch')
                 else:
                     st.warning("Image file is missing.")
                 st.caption(f"{item['name']} ({item['category']})")
+                st.write(f"**Season:** {item.get('season', 'All Seasons')}")
+                if item.get("ai_description"):
+                    st.write(f"**AI Details:** {item['ai_description']}")
 
                 with st.expander("Edit / Delete", expanded=False):
                     with st.form(f"edit_item_{item['id']}", clear_on_submit=False):
@@ -119,6 +165,20 @@ def render_wardrobe_page() -> None:
                         new_category = st.text_input(
                             "Category", value=item["category"], key=f"edit_category_{item['id']}"
                         )
+                        
+                        season_options = ["All Seasons", "Spring", "Summer", "Autumn", "Winter"]
+                        curr_season = item.get("season", "All Seasons")
+                        season_idx = season_options.index(curr_season) if curr_season in season_options else 0
+                        new_season = st.selectbox(
+                            "Season", 
+                            season_options,
+                            index=season_idx,
+                            key=f"edit_season_{item['id']}"
+                        )
+                        new_ai_desc = st.text_area(
+                            "AI Description", value=item.get("ai_description", ""), key=f"edit_ai_{item['id']}"
+                        )
+                        
                         replace_image = st.file_uploader(
                             "Replace image (optional)",
                             type=["jpg", "jpeg", "png", "webp"],
@@ -136,6 +196,8 @@ def render_wardrobe_page() -> None:
                             name=new_name,
                             category=new_category,
                             image_path=new_image_path,
+                            season=new_season,
+                            ai_description=new_ai_desc
                         )
                         if updated:
                             st.success("Item updated.")
@@ -205,20 +267,24 @@ def main() -> None:
         st.title("Smart Wardrobe Assistant")
     with col2:
         st.markdown(f"<div style='text-align: right; color: #888; font-size: 0.9em; padding-top: 15px;'>👤 {user['username']}</div>", unsafe_allow_html=True)
-        if st.button("Logout", use_container_width=True):
+        if st.button("Logout", width='stretch'):
             st.session_state.user = None
             st.rerun()
 
     print("--- 8. Рендеримо Вкладки ---")
-    tab_wardrobe, tab_stylist = st.tabs(["My Wardrobe", "AI Stylist"])
-
-    with tab_wardrobe:
-        print("--- 9. Рендеримо Гардероб ---")
-        render_wardrobe_page()
+    tab_stylist, tab_wardrobe, tab_add = st.tabs(["AI Stylist", "My Wardrobe", "Add Item"])
 
     with tab_stylist:
-        print("--- 10. Рендеримо AI Stylist ---")
+        print("--- 9. Рендеримо AI Stylist ---")
         render_ai_stylist_page()
+
+    with tab_wardrobe:
+        print("--- 9.5. Рендеримо Гардероб ---")
+        render_wardrobe_page()
+
+    with tab_add:
+        print("--- 10. Рендеримо Додавання ---")
+        render_add_item_page()
 
 
 if __name__ == "__main__":

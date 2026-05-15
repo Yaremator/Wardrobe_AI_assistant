@@ -59,6 +59,14 @@ def init_db() -> None:
             END;
             """
         )
+        try:
+            conn.execute("ALTER TABLE clothes ADD COLUMN season TEXT DEFAULT 'All Seasons';")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE clothes ADD COLUMN ai_description TEXT DEFAULT '';")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
@@ -106,14 +114,14 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     return {"id": row["id"], "username": row["username"]}
 
 
-def add_clothing_item(user_id: int, name: str, image_path: str, category: str) -> int:
+def add_clothing_item(user_id: int, name: str, image_path: str, category: str, season: str = "All Seasons", ai_description: str = "") -> int:
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO clothes (user_id, name, image_path, category)
-            VALUES (?, ?, ?, ?);
+            INSERT INTO clothes (user_id, name, image_path, category, season, ai_description)
+            VALUES (?, ?, ?, ?, ?, ?);
             """,
-            (user_id, name.strip(), image_path, category.strip()),
+            (user_id, name.strip(), image_path, category.strip(), season.strip(), ai_description.strip()),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -123,7 +131,7 @@ def get_user_clothes(user_id: int) -> list[dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, name, image_path, category, created_at, updated_at
+            SELECT id, name, image_path, category, season, ai_description, created_at, updated_at
             FROM clothes
             WHERE user_id = ?
             ORDER BY created_at DESC;
@@ -138,7 +146,7 @@ def get_clothing_item(item_id: int, user_id: int) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, user_id, name, image_path, category
+            SELECT id, user_id, name, image_path, category, season, ai_description
             FROM clothes
             WHERE id = ? AND user_id = ?;
             """,
@@ -153,6 +161,8 @@ def update_clothing_item(
     name: str | None = None,
     category: str | None = None,
     image_path: str | None = None,
+    season: str | None = None,
+    ai_description: str | None = None,
 ) -> bool:
     updates = []
     values: list[Any] = []
@@ -166,6 +176,12 @@ def update_clothing_item(
     if image_path is not None:
         updates.append("image_path = ?")
         values.append(image_path)
+    if season is not None:
+        updates.append("season = ?")
+        values.append(season.strip())
+    if ai_description is not None:
+        updates.append("ai_description = ?")
+        values.append(ai_description.strip())
 
     if not updates:
         return False
