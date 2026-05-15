@@ -192,28 +192,31 @@ def main() -> None:
     print("--- 5. Ініціалізація стану ---")
     init_app_state()
 
-    st.title("Smart Wardrobe Assistant")
-
     user = st.session_state.user
     print(f"--- 6. Перевірка юзера: {user} ---")
     if user is None:
+        st.title("Smart Wardrobe Assistant")
         print("--- 7. Рендеримо сторінку авторизації ---")
         render_auth_page()
         return
 
-    sidebar = st.sidebar
-    sidebar.success(f"Logged in as `{user['username']}`")
-    if sidebar.button("Logout"):
-        st.session_state.user = None
-        st.rerun()
+    col1, col2 = st.columns([0.85, 0.15])
+    with col1:
+        st.title("Smart Wardrobe Assistant")
+    with col2:
+        st.markdown(f"<div style='text-align: right; color: #888; font-size: 0.9em; padding-top: 15px;'>👤 {user['username']}</div>", unsafe_allow_html=True)
+        if st.button("Logout", use_container_width=True):
+            st.session_state.user = None
+            st.rerun()
 
-    page = sidebar.radio("Navigation", ["My Wardrobe", "AI Stylist"])
-    print(f"--- 8. Поточна сторінка: {page} ---")
+    print("--- 8. Рендеримо Вкладки ---")
+    tab_wardrobe, tab_stylist = st.tabs(["My Wardrobe", "AI Stylist"])
 
-    if page == "My Wardrobe":
+    with tab_wardrobe:
         print("--- 9. Рендеримо Гардероб ---")
         render_wardrobe_page()
-    else:
+
+    with tab_stylist:
         print("--- 10. Рендеримо AI Stylist ---")
         render_ai_stylist_page()
 
