@@ -60,6 +60,11 @@ def run_app() -> None:
     sidebar = st.sidebar
     sidebar.success(f"Logged in as `{user['username']}`")
 
+    from langfuse_tracing import is_langfuse_enabled, verify_langfuse_connection
+
+    if is_langfuse_enabled() and not verify_langfuse_connection():
+        sidebar.warning("Langfuse tracing is configured but authentication failed.")
+
     if sidebar.button("Logout"):
         st.session_state.user = None
         st.rerun()

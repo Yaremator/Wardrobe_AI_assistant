@@ -1,5 +1,6 @@
 from pathlib import Path
 import asyncio
+import uuid
 
 import streamlit as st
 
@@ -29,12 +30,14 @@ def run_stylist_workflow_sync(
     user_id: int,
     user_query: str,
     chat_history: list[dict[str, str]] | None = None,
+    session_id: str | None = None,
 ):
     return asyncio.run(
         run_stylist_workflow(
             user_id=user_id,
             user_query=user_query,
             chat_history=chat_history or [],
+            session_id=session_id,
         )
     )
 
@@ -106,7 +109,10 @@ def render_wardrobe_page() -> None:
             if item_image is not None:
                 with st.spinner("AI is analyzing the photo..."):
                     image_path = process_and_save_uploaded_image(item_image, UPLOADS_DIR)
-                    metadata = analyze_clothing_image_auto(image_path)
+                    metadata = analyze_clothing_image_auto(
+                        image_path,
+                        user_id=st.session_state.user["id"],
+                    )
 
                     st.session_state.draft_item = {
                         "image_path": image_path,
@@ -123,9 +129,9 @@ def render_wardrobe_page() -> None:
             col_img, col_form = st.columns([0.4, 0.6])
 
             with col_img:
-                st.image(draft["image_path"], use_container_width=True)
+                st.image(draft["image_path"], width="stretch")
 
-                if st.button("Cancel / Upload another", use_container_width=True):
+                if st.button("Cancel / Upload another", width="stretch"):
                     st.session_state.draft_item = None
                     st.rerun()
 
@@ -181,7 +187,7 @@ def render_wardrobe_page() -> None:
                 image_path = Path(item["image_path"])
 
                 if image_path.exists():
-                    st.image(str(image_path), use_container_width=True)
+                    st.image(str(image_path), width="stretch")
                 else:
                     st.warning("Image file is missing.")
 
@@ -318,6 +324,9 @@ def render_ai_stylist_page() -> None:
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
+    if "stylist_session_id" not in st.session_state:
+        st.session_state.stylist_session_id = str(uuid.uuid4())
+
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -341,6 +350,7 @@ def render_ai_stylist_page() -> None:
                     user_id=st.session_state.user["id"],
                     user_query=user_prompt,
                     chat_history=st.session_state.chat_history[:-1],
+                    session_id=st.session_state.stylist_session_id,
                 )
 
             assistant_reply = workflow_state.final_advice or (
@@ -388,12 +398,12 @@ def render_profile_page() -> None:
             img_col1.image(
                 str(BASE_DIR / "pics" / "male.jpg"),
                 caption="Чоловік",
-                use_container_width=True,
+                width="stretch",
             )
             img_col2.image(
                 str(BASE_DIR / "pics" / "female.jpg"),
                 caption="Жінка",
-                use_container_width=True,
+                width="stretch",
             )
         except Exception:
             st.error("Зображення не знайдені в папці 'pics'.")

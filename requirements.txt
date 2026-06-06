@@ -11,3 +11,4 @@ Pillow
 rembg
 pydantic
 google-genai
+langfuse>=4.0

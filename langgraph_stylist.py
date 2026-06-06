@@ -12,6 +12,7 @@ import requests
 from google import genai
 from google.genai import types
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
 
 from db import get_clothing_item, get_user_clothes
+from langfuse_tracing import langfuse_trace, observe_operation
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -103,6 +105,14 @@ def _get_weather_router_llm() -> Any:
 @lru_cache(maxsize=1)
 def _get_validator_llm() -> Any:
     return _get_fast_llm().with_structured_output(ValidatorOutput)
+
+
+def _reset_cached_llm_clients() -> None:
+    """Drop cached async LLM clients bound to a previous asyncio event loop."""
+    _get_fast_llm.cache_clear()
+    _get_selector_llm.cache_clear()
+    _get_weather_router_llm.cache_clear()
+    _get_validator_llm.cache_clear()
 
 
 def _safe_chat_history_context(chat_history: list[dict[str, str]], max_messages: int = 10) -> str:
@@ -360,7 +370,7 @@ def check_weather(location: str, date: str = "") -> str:
     return get_weather_summary(location, date)
 
 
-async def weather_node(state: StylistState) -> StylistState:
+async def weather_node(state: StylistState, config: RunnableConfig) -> StylistState:
     messages = [
         SystemMessage(
             content=(
@@ -379,7 +389,7 @@ async def weather_node(state: StylistState) -> StylistState:
     ]
 
     try:
-        result: WeatherRequest = await _get_weather_router_llm().ainvoke(messages)
+        result: WeatherRequest = await _get_weather_router_llm().ainvoke(messages, config=config)
         state.weather_reasoning = result.reasoning
 
         if result.should_check_weather:
@@ -430,7 +440,7 @@ def _build_selector_metadata(items: list[WardrobeItem], max_items: int = 60) -> 
     return "\n".join(lines)
 
 
-async def selector_node(state: StylistState) -> StylistState:
+async def selector_node(state: StylistState, config: RunnableConfig) -> StylistState:
     if not state.wardrobe_items:
         state.wardrobe_items = await _load_wardrobe_items(state.user_id)
 
@@ -465,7 +475,7 @@ async def selector_node(state: StylistState) -> StylistState:
         ),
     ]
 
-    result: SelectorOutput = await selector_llm.ainvoke(messages)
+    result: SelectorOutput = await selector_llm.ainvoke(messages, config=config)
 
     state.selected_items = result.selected_items[:MAX_VISION_IMAGES]
     state.selection_reasoning = result.reasoning
@@ -515,7 +525,7 @@ async def _load_selected_items_with_images(
     return resolved_items, missing
 
 
-async def vision_node(state: StylistState) -> StylistState:
+async def vision_node(state: StylistState, config: RunnableConfig) -> StylistState:
     if state.final_advice:
         return state
 
@@ -592,7 +602,7 @@ async def vision_node(state: StylistState) -> StylistState:
         return state
 
     llm = _get_fast_llm()
-    response = await llm.ainvoke([HumanMessage(content=multimodal_parts)])
+    response = await llm.ainvoke([HumanMessage(content=multimodal_parts)], config=config)
 
     state.vision_notes = _extract_text_from_llm_content(response.content)
     state.final_advice = state.vision_notes
@@ -600,7 +610,7 @@ async def vision_node(state: StylistState) -> StylistState:
     return state
 
 
-async def validator_node(state: StylistState) -> StylistState:
+async def validator_node(state: StylistState, config: RunnableConfig) -> StylistState:
     if not state.final_advice:
         state.final_advice = "Unable to generate advice right now. Please try again."
         return state
@@ -625,7 +635,7 @@ async def validator_node(state: StylistState) -> StylistState:
         ),
     ]
 
-    result: ValidatorOutput = await validator_llm.ainvoke(messages)
+    result: ValidatorOutput = await validator_llm.ainvoke(messages, config=config)
     state.validator_feedback = result.feedback
 
     if result.status == "needs_revision":
@@ -664,7 +674,10 @@ async def run_stylist_workflow(
     user_id: int,
     user_query: str,
     chat_history: list[dict[str, str]] | None = None,
+    session_id: str | None = None,
 ) -> StylistState:
+    _reset_cached_llm_clients()
+
     initial = StylistState(
         user_id=user_id,
         user_query=user_query,
@@ -674,21 +687,41 @@ async def run_stylist_workflow(
     workflow = get_stylist_workflow()
 
     try:
-        result = await workflow.ainvoke(initial)
-
-        if isinstance(result, StylistState):
-            return result
-
-        if isinstance(result, dict):
-            return StylistState.model_validate(result)
-
-        return StylistState(
+        with langfuse_trace(
+            name="stylist-workflow",
             user_id=user_id,
-            user_query=user_query,
-            chat_history=chat_history or [],
-            final_advice="Unexpected workflow output format.",
-            errors=["Unexpected workflow output type."],
-        )
+            session_id=session_id or f"user-{user_id}",
+            tags=["langgraph", "stylist", "feature:ai-stylist"],
+            trace_input={"user_query": user_query},
+        ) as trace:
+            result = await workflow.ainvoke(
+                initial,
+                config=trace.config if trace else None,
+            )
+
+            if isinstance(result, StylistState):
+                validated = result
+            elif isinstance(result, dict):
+                validated = StylistState.model_validate(result)
+            else:
+                validated = StylistState(
+                    user_id=user_id,
+                    user_query=user_query,
+                    chat_history=chat_history or [],
+                    final_advice="Unexpected workflow output format.",
+                    errors=["Unexpected workflow output type."],
+                )
+
+            if trace:
+                trace.set_output(
+                    {
+                        "final_advice": (validated.final_advice or "")[:500],
+                        "errors": validated.errors,
+                        "selected_item_count": len(validated.selected_items),
+                    }
+                )
+
+            return validated
 
     except Exception as exc:  # noqa: BLE001
         return StylistState(
@@ -780,8 +813,35 @@ def _normalize_season(value: str, name: str = "", description: str = "") -> str:
     return "All Seasons"
 
 
-def analyze_clothing_image_auto(image_path: str) -> dict[str, str]:
+def analyze_clothing_image_auto(
+    image_path: str,
+    user_id: int | None = None,
+) -> dict[str, str]:
     """Analyze uploaded clothing image and return normalized metadata for wardrobe item."""
+    path = Path(image_path)
+    trace_input = {"image_filename": path.name}
+
+    with observe_operation(
+        name="analyze-clothing-image",
+        input_data=trace_input,
+        user_id=user_id,
+        tags=["feature:wardrobe-upload"],
+    ) as observation:
+        result = _analyze_clothing_image_impl(image_path)
+
+        if observation is not None:
+            observation.update(
+                output={
+                    "name": result.get("name", ""),
+                    "category": result.get("category", "Other"),
+                    "season": result.get("season", "All Seasons"),
+                }
+            )
+
+        return result
+
+
+def _analyze_clothing_image_impl(image_path: str) -> dict[str, str]:
     api_key = os.getenv("GOOGLE_API_KEY", "").strip()
 
     if not api_key:
