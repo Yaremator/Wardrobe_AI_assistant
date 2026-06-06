@@ -4,3 +4,10 @@ __pycache__/
 uploads/
 *.db
 .streamlit/
+.env
+wardrobe.db
+uploads/
+__pycache__/
+*.pyc
+.idea/
+.vscode/

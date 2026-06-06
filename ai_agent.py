@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any
 from pathlib import Path
@@ -77,14 +78,10 @@ def _build_tools(user_id: int):
         if not clothes:
             return "User wardrobe is empty."
 
-        lines = []
-        for item in clothes:
-            season = item.get('season', 'All Seasons')
-            ai_desc = item.get('ai_description', '')
-            details = f"- {item['name']} (Category: {item['category']}, Season: {season})"
-            if ai_desc:
-                details += f"\n  Details: {ai_desc}"
-            lines.append(details)
+        lines = [
+            f"- {item['name']} ({item['category']})"
+            for item in clothes
+        ]
         return "User wardrobe items:\n" + "\n".join(lines)
 
     return [get_current_weather, get_user_wardrobe]
@@ -153,55 +150,60 @@ def generate_stylist_reply(
 
     return "I could not complete the full tool workflow right now. Please try again."
 
-import json
 
 def analyze_clothing_image_auto(image_path: str) -> dict:
     """Uses Gemini Vision to generate a structured description of the uploaded clothing item."""
     api_key = os.getenv("GOOGLE_API_KEY", "").strip()
     if not api_key:
         return {}
-    
+
     try:
         client = genai.Client(api_key=api_key)
         path = Path(image_path)
         if not path.exists():
             return {}
-            
+
         with open(path, "rb") as f:
             image_bytes = f.read()
-            
+
         prompt = """
-        You are a professional stylist and wardrobe organizer. 
+        You are a professional stylist and wardrobe organizer.
         Analyze the provided clothing image and extract the metadata in JSON format.
-        
+
         Required fields in JSON:
-        1. "name": A short descriptive name (e.g., "Чорна шкіряна куртка", "Біла бавовняна футболка"). Use Ukrainian.
-        2. "category": Must be strictly ONE of these exact English strings: ["Top", "Bottom", "Shoes", "Outerwear", "Dress", "Accessory", "Other"].
-        3. "season": Must be strictly ONE of these exact English strings: ["All Seasons", "Spring", "Summer", "Autumn", "Winter"].
-        4. "description": A detailed list of physical properties (NOT full sentences). Format as "Property: Value" separated by newlines. Use Ukrainian.
-        Include properties like:
-        - Колір (Color)
-        - Матеріал (Fabric/Material)
-        - Форма/Крій (Fit/Shape)
-        - Шар одягу (Inner/Outer layer)
-        - Стиль (Style/Vibe)
-        - Візерунок (Pattern)
+        1. "name": A short descriptive name. Use Ukrainian.
+        2. "category": Must be strictly ONE of these exact English strings:
+           ["Top", "Bottom", "Shoes", "Outerwear", "Dress", "Accessory", "Other"].
+        3. "season": Must be strictly ONE of these exact English strings:
+           ["All Seasons", "Spring", "Summer", "Autumn", "Winter"].
+        4. "description": A detailed list of physical properties.
+           Format as "Property: Value" separated by newlines. Use Ukrainian.
+
+        Include:
+        - Колір
+        - Матеріал
+        - Форма/Крій
+        - Шар одягу
+        - Стиль
+        - Візерунок
         """
-        
+
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model="gemini-2.5-flash",
             contents=[
                 prompt,
                 types.Part.from_bytes(
                     data=image_bytes,
-                    mime_type='image/png',
-                )
+                    mime_type="image/png",
+                ),
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-            )
+            ),
         )
+
         return json.loads(response.text)
+
     except Exception as e:
         print(f"Failed to generate AI description: {e}")
         return {}
