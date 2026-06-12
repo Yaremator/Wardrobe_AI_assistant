@@ -17,6 +17,23 @@ st.set_page_config(
     layout="wide",
 )
 
+# Hide Deploy button and Streamlit toolbar
+st.markdown("""
+<style>
+    [data-testid="stToolbar"] {
+        display: none;
+    }
+    
+    .stDeployButton {
+        display: none;
+    }
+    
+    header[data-testid="stHeader"] {
+        display: none;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 init_db()
 init_app_state()
 
@@ -28,6 +45,7 @@ if user is None:
     render_auth_page()
     st.stop()
 
+# User info and logout in sidebar
 sidebar = st.sidebar
 sidebar.success(f"Logged in as `{user['username']}`")
 
@@ -40,14 +58,14 @@ if sidebar.button("Logout"):
     st.session_state.user = None
     st.rerun()
 
-page = sidebar.radio(
-    "Navigation",
-    ["Profile", "My Wardrobe", "AI Stylist"],
-)
+# Navigation tabs at the top
+tab_profile, tab_wardrobe, tab_stylist = st.tabs(["Profile", "My Wardrobe", "AI Stylist"])
 
-if page == "My Wardrobe":
-    render_wardrobe_page()
-elif page == "AI Stylist":
-    render_ai_stylist_page()
-else:
+with tab_profile:
     render_profile_page()
+
+with tab_wardrobe:
+    render_wardrobe_page()
+
+with tab_stylist:
+    render_ai_stylist_page()
