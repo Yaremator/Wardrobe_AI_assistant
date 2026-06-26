@@ -102,7 +102,7 @@ def generate_stylist_reply(
 
     tools = _build_tools(user_id)
     llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-lite-latest",
+        model="gemini-2.5-flash-lite",
         temperature=0.3,
         google_api_key=api_key,
     )
